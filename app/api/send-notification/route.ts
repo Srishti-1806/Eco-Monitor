@@ -1,6 +1,6 @@
 import connectDB from "@/lib/mongodb";
 
-import { messaging } from "@/lib/firebase-admin";
+import { getMessaging } from "@/lib/firebase-admin";
 import { NextResponse } from "next/server";
 import { fetchAQIData } from "@/lib/api-services";
 import { getAQIHealthRecommendations } from "@/lib/aqi-service";
@@ -30,6 +30,7 @@ export async function POST(req: Request) {
     const tokenList = tokens.map((t) => t.token);
     console.log("Sending notification to tokens:", tokenList);
 
+    const messaging = await getMessaging();
     if (!messaging?.sendEachForMulticast) {
       return NextResponse.json({ error: "Firebase messaging is not configured." }, { status: 503 });
     }
