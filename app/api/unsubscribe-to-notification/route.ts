@@ -4,7 +4,10 @@ import connectDB from "@/lib/mongodb";
 
 export async function DELETE(req: Request) {
     try {
-        await connectDB();
+        const connected = await connectDB();
+        if (!connected) {
+            return NextResponse.json({ success: false, message: "MongoDB is not configured. Unsubscribe service is unavailable." }, { status: 503 });
+        }
 
         const { email } = await req.json(); // Get email from request body
 

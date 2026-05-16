@@ -33,6 +33,9 @@ export default function WaterQualityPage() {
   const [activeTab, setActiveTab] = useState("current")
   const [showNotificationForm, setShowNotificationForm] = useState(false)
   const [externalData, setExternalData] = useState<any>(null)
+  const [arduinoData, setArduinoData] = useState<any>(null)
+  const [arduinoLoading, setArduinoLoading] = useState(true)
+  const [arduinoError, setArduinoError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showCallDialog, setShowCallDialog] = useState(false)
 
@@ -187,6 +190,35 @@ export default function WaterQualityPage() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    const getArduinoData = async () => {
+      try {
+        setArduinoLoading(true)
+        setArduinoError(null)
+
+        const response = await fetch("/api/arduino")
+        const result = await response.json()
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.message || "Unable to read Arduino data")
+        }
+
+        setArduinoData(result.data)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error"
+        console.error("Arduino fetch error:", error)
+        setArduinoError(message)
+        setArduinoData(null)
+      } finally {
+        setArduinoLoading(false)
+      }
+    }
+
+    getArduinoData()
+    const interval = setInterval(getArduinoData, 10000)
+    return () => clearInterval(interval)
+  }, [])
+
   // Check for water quality issues
   useEffect(() => {
     const interval = setInterval(() => {
@@ -250,37 +282,44 @@ export default function WaterQualityPage() {
 
         {activeTab === "current" && (
           <div className="grid gap-6">
-            {/* <Card className="bg-white/10 backdrop-blur-sm border-white/20">
+            <Card className="bg-white/10 backdrop-blur-sm border-white/20">
               <CardHeader>
-                <CardTitle className="text-white">Current Water Quality</CardTitle>
+                <CardTitle className="text-white">Arduino Sensor Data</CardTitle>
                 <CardDescription className="text-white/70">
-                  Real-time monitoring of municipal water supply
+                  Live probe values from the connected water quality device.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  {waterData.map((param) => (
-                    <WaterQualityGauge
-                      key={param.name}
-                      name={param.name}
-                      value={param.value}
-                      unit={param.unit}
-                      min={param.min}
-                      max={param.max}
-                      safeLimit={param.safeLimit}
-                    />
-                  ))}
-                </div>
-
-                <div className="mt-4 flex items-center justify-between rounded-md bg-blue-500/20 p-2">
-                  <div className="flex items-center gap-2">
-                    <Bell className="h-4 w-4 text-blue-300" />
-                    <span className="text-sm font-medium text-white">Alerts active</span>
+                {arduinoLoading ? (
+                  <div className="flex justify-center items-center h-40">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
                   </div>
-                  <span className="text-xs text-white/70">Last updated: {new Date().toLocaleTimeString()}</span>
-                </div>
+                ) : arduinoError ? (
+                  <div className="p-4 text-center text-white/70">{arduinoError}</div>
+                ) : arduinoData ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-lg bg-slate-950/40 p-4">
+                      <div className="text-sm font-medium text-white">pH</div>
+                      <div className="mt-2 text-3xl font-bold text-cyan-300">{arduinoData.ph}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-950/40 p-4">
+                      <div className="text-sm font-medium text-white">Temperature</div>
+                      <div className="mt-2 text-3xl font-bold text-amber-300">{arduinoData.temp}°C</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-950/40 p-4">
+                      <div className="text-sm font-medium text-white">TDS</div>
+                      <div className="mt-2 text-3xl font-bold text-yellow-300">{arduinoData.tds} mg/L</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-950/40 p-4">
+                      <div className="text-sm font-medium text-white">Turbidity</div>
+                      <div className="mt-2 text-3xl font-bold text-teal-300">{arduinoData.ntu} NTU</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-white/70">Waiting for Arduino sensor data...</div>
+                )}
               </CardContent>
-            </Card> */}
+            </Card>
           </div>
         )}
 

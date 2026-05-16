@@ -4,7 +4,10 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
     try {
-        await connectDB();
+        const connected = await connectDB();
+        if (!connected) {
+            return NextResponse.json({ success: false, message: "MongoDB is not configured. Subscription service is unavailable." }, { status: 503 });
+        }
 
         const {name,email,age,token} = await req.json();
     

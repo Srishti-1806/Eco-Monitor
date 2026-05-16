@@ -8,7 +8,10 @@ import usermodel from "@/lib/usermodel";
 
 export async function POST(req: Request) {
   try {
-    await connectDB();
+    const connected = await connectDB();
+    if (!connected) {
+      return NextResponse.json({ error: "MongoDB is not configured. Notification service is unavailable." }, { status: 503 });
+    }
 
     // Fetch AQI Data
     const data1 = await fetchAQIData();
@@ -26,6 +29,10 @@ export async function POST(req: Request) {
 
     const tokenList = tokens.map((t) => t.token);
     console.log("Sending notification to tokens:", tokenList);
+
+    if (!messaging?.sendEachForMulticast) {
+      return NextResponse.json({ error: "Firebase messaging is not configured." }, { status: 503 });
+    }
 
     // Prepare FCM message
     const message = {
