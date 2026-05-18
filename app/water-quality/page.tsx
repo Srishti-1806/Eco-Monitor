@@ -26,16 +26,75 @@ import { NavigationBar } from "@/components/navigation-bar"
 import { useToast } from "@/components/ui/use-toast"
 // import { WaterQualityGauge } from "@/components/water-quality-gauge"
 
+const THINGSPEAK_SAFE_RANGES: Record<string, { min?: number; max?: number }> = {
+  ph: { min: 6.5, max: 8.5 },
+  temp: { max: 35 },
+  tds: { max: 500 },
+  ntu: { max: 5 },
+  orp: { min: 650, max: 900 },
+  do: { min: 5 },
+  ec: { max: 1500 },
+  other: {},
+}
+
+const THINGSPEAK_FIELD_LABELS: Record<string, string> = {
+  ph: "pH",
+  temp: "Temperature",
+  tds: "TDS",
+  ntu: "Turbidity",
+  orp: "ORP",
+  do: "Dissolved Oxygen",
+  ec: "Electrical Conductivity",
+  other: "Other",
+}
+
+function normalizeThingSpeakValue(value: unknown) {
+  if (typeof value === "number") return value
+  if (typeof value === "string") {
+    const parsed = parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : value
+  }
+  return value
+}
+
+function getThingSpeakMetrics(data: any) {
+  if (!data?.fields || typeof data.fields !== "object") return []
+
+  return Object.entries(data.fields).map(([key, field]: [string, any]) => {
+    const value = normalizeThingSpeakValue(field?.value)
+    const range = THINGSPEAK_SAFE_RANGES[key] ?? {}
+    const isSafe = typeof value === "number"
+      ? (range.min !== undefined && value < range.min)
+        ? false
+        : range.max !== undefined
+        ? value > range.max
+          ? false
+          : true
+        : true
+      : true
+
+    return {
+      name: THINGSPEAK_FIELD_LABELS[key] ?? key,
+      key,
+      value,
+      unit: field?.unit ?? "",
+      safeMin: range.min,
+      safeLimit: range.max ?? range.min ?? 0,
+      isSafe,
+    }
+  })
+}
+
 export default function WaterQualityPage() {
   const [alertOpen, setAlertOpen] = useState(false)
-  const [waterData, setWaterData] = useState(getWaterQualityData())
+  const [waterData, setWaterData] = useState<any[]>([])
   const [alertSound, setAlertSound] = useState<any>(null)
   const [activeTab, setActiveTab] = useState("current")
   const [showNotificationForm, setShowNotificationForm] = useState(false)
   const [externalData, setExternalData] = useState<any>(null)
-  const [arduinoData, setArduinoData] = useState<any>(null)
-  const [arduinoLoading, setArduinoLoading] = useState(true)
-  const [arduinoError, setArduinoError] = useState<string | null>(null)
+  const [thingSpeakData, setThingSpeakData] = useState<any>(null)
+  const [thingSpeakLoading, setThingSpeakLoading] = useState(true)
+  const [thingSpeakError, setThingSpeakError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showCallDialog, setShowCallDialog] = useState(false)
 
@@ -191,62 +250,60 @@ export default function WaterQualityPage() {
   }, [])
 
   useEffect(() => {
-    const getArduinoData = async () => {
+    const getThingSpeakData = async () => {
       try {
-        setArduinoLoading(true)
-        setArduinoError(null)
+        setThingSpeakLoading(true)
+        setThingSpeakError(null)
 
-        const response = await fetch("/api/arduino")
+        const response = await fetch("/api/thingspeak")
         const result = await response.json()
 
         if (!response.ok || !result.success) {
-          throw new Error(result.message || "Unable to read Arduino data")
+          throw new Error(result.message || "Unable to read ThingSpeak data")
         }
 
-        setArduinoData(result.data)
+        setThingSpeakData(result)
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error"
-        console.error("Arduino fetch error:", error)
-        setArduinoError(message)
-        setArduinoData(null)
+        console.error("ThingSpeak fetch error:", error)
+        setThingSpeakError(message)
+        setThingSpeakData(null)
       } finally {
-        setArduinoLoading(false)
+        setThingSpeakLoading(false)
       }
     }
 
-    getArduinoData()
-    const interval = setInterval(getArduinoData, 10000)
+    getThingSpeakData()
+    const interval = setInterval(getThingSpeakData, 10000)
     return () => clearInterval(interval)
   }, [])
 
-  // Check for water quality issues
+  // Update water data and alerts from ThingSpeak sensor values
   useEffect(() => {
-    const interval = setInterval(() => {
-      const newData = getWaterQualityData()
-      setWaterData(newData)
+    if (!thingSpeakData) return
 
-      // Check if any parameter exceeds safe limits
-      const hasIssue = newData.some((param) => param.value > param.safeLimit)
+    const newData = getThingSpeakMetrics(thingSpeakData)
+    setWaterData(newData)
 
-      if (hasIssue && !alertOpen) {
-        setAlertOpen(true)
-        if (alertSound) {
-          try {
-            alertSound.play()
-          } catch (e) {
-            console.error("Error playing sound:", e)
-          }
+    const hasIssue = newData.some((param) => !param.isSafe)
+
+    if (hasIssue && !alertOpen) {
+      setAlertOpen(true)
+      if (alertSound) {
+        try {
+          alertSound.play()
+        } catch (e) {
+          console.error("Error playing sound:", e)
         }
-
-        // Auto-dismiss after 3 seconds
-        setTimeout(() => {
-          setAlertOpen(false)
-        }, 3000)
       }
-    }, 10000) // Check every 10 seconds
 
-    return () => clearInterval(interval)
-  }, [alertOpen, alertSound])
+      const timeout = setTimeout(() => {
+        setAlertOpen(false)
+      }, 3000)
+
+      return () => clearTimeout(timeout)
+    }
+  }, [thingSpeakData, alertOpen, alertSound])
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-blue-900 via-blue-700 to-blue-500">
@@ -284,39 +341,48 @@ export default function WaterQualityPage() {
           <div className="grid gap-6">
             <Card className="bg-white/10 backdrop-blur-sm border-white/20">
               <CardHeader>
-                <CardTitle className="text-white">Arduino Sensor Data</CardTitle>
+                <CardTitle className="text-white">ThingSpeak IoT Water Sensor</CardTitle>
                 <CardDescription className="text-white/70">
-                  Live probe values from the connected water quality device.
+                  Live values from your ThingSpeak-connected water monitoring device.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {arduinoLoading ? (
+                {thingSpeakLoading ? (
                   <div className="flex justify-center items-center h-40">
                     <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
                   </div>
-                ) : arduinoError ? (
-                  <div className="p-4 text-center text-white/70">{arduinoError}</div>
-                ) : arduinoData ? (
+                ) : thingSpeakError ? (
+                  <div className="p-4 text-center text-white/70">{thingSpeakError}</div>
+                ) : thingSpeakData ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="rounded-lg bg-slate-950/40 p-4">
                       <div className="text-sm font-medium text-white">pH</div>
-                      <div className="mt-2 text-3xl font-bold text-cyan-300">{arduinoData.ph}</div>
+                      <div className="mt-2 text-3xl font-bold text-cyan-300">{thingSpeakData.fields?.ph?.value ?? "--"}</div>
                     </div>
                     <div className="rounded-lg bg-slate-950/40 p-4">
                       <div className="text-sm font-medium text-white">Temperature</div>
-                      <div className="mt-2 text-3xl font-bold text-amber-300">{arduinoData.temp}°C</div>
+                      <div className="mt-2 text-3xl font-bold text-amber-300">
+                        {thingSpeakData.fields?.temp?.value ?? "--"}
+                        {thingSpeakData.fields?.temp?.unit || "°C"}
+                      </div>
                     </div>
                     <div className="rounded-lg bg-slate-950/40 p-4">
                       <div className="text-sm font-medium text-white">TDS</div>
-                      <div className="mt-2 text-3xl font-bold text-yellow-300">{arduinoData.tds} mg/L</div>
+                      <div className="mt-2 text-3xl font-bold text-yellow-300">
+                        {thingSpeakData.fields?.tds?.value ?? "--"}
+                        {thingSpeakData.fields?.tds?.unit || " mg/L"}
+                      </div>
                     </div>
                     <div className="rounded-lg bg-slate-950/40 p-4">
                       <div className="text-sm font-medium text-white">Turbidity</div>
-                      <div className="mt-2 text-3xl font-bold text-teal-300">{arduinoData.ntu} NTU</div>
+                      <div className="mt-2 text-3xl font-bold text-teal-300">
+                        {thingSpeakData.fields?.ntu?.value ?? "--"}
+                        {thingSpeakData.fields?.ntu?.unit || " NTU"}
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="p-4 text-center text-white/70">Waiting for Arduino sensor data...</div>
+                  <div className="p-4 text-center text-white/70">Waiting for ThingSpeak sensor data...</div>
                 )}
               </CardContent>
             </Card>
@@ -507,11 +573,16 @@ export default function WaterQualityPage() {
                 </AlertDialogDescription>
                 <ul className="mt-2 space-y-1">
                   {waterData
-                    .filter((param) => param.value > param.safeLimit)
+                    .filter((param) => !param.isSafe)
                     .map((param) => (
                       <li key={param.name} className="flex items-center gap-2 text-red-400">
                         <AlertTriangle className="h-4 w-4" />
-                        {param.name}: {param.value} {param.unit} (Safe limit: {param.safeLimit} {param.unit})
+                        {param.name}: {param.value} {param.unit}{' '}
+                        {param.safeMin !== undefined && typeof param.value === "number" && param.value < param.safeMin
+                          ? `(Below safe minimum: ${param.safeMin}${param.unit})`
+                          : param.safeLimit
+                          ? `(Above safe maximum: ${param.safeLimit}${param.unit})`
+                          : "(Check sensor reading)"}
                       </li>
                     ))}
                 </ul>
